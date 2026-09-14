@@ -5,16 +5,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from threading import Event
 from time import monotonic
-from typing import Protocol
+from typing import Mapping, Protocol
 
 from blob_solver.game.board import Board
 from blob_solver.game.groups import Move
 from blob_solver.game.rules import GameRules
 
+from .plan import RootMoveEvaluation
+
 
 @dataclass(slots=True)
 class SearchStats:
     nodes: int = 0
+    rollout_nodes: int = 0
+    terminal_plans: int = 0
+    complete_rollouts: int = 0
+    best_complete_score: int = 0
+    upper_bound: int | None = None
     started_at: float = field(default_factory=monotonic)
     finished_at: float | None = None
     interrupted: bool = False
@@ -23,6 +30,10 @@ class SearchStats:
     @property
     def elapsed(self) -> float:
         return (self.finished_at or monotonic()) - self.started_at
+
+    @property
+    def states_examined(self) -> int:
+        return self.nodes + self.rollout_nodes
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +48,10 @@ class Solution:
     solver_name: str
     upper_bound: int | None = None
     cancelled: bool = False
+    terminal_plans: int = 0
+    complete_rollouts: int = 0
+    solver_stats: Mapping[str, object] = field(default_factory=dict)
+    root_evaluations: tuple[RootMoveEvaluation, ...] = ()
 
     @property
     def first_move(self) -> Move | None:
@@ -49,6 +64,27 @@ class Solution:
     @property
     def status(self) -> str:
         return "OPTIMAL SOLUTION PROVEN" if self.optimal_proven else "BEST KNOWN SOLUTION"
+
+    def to_plan(self, board: Board, *, rules: GameRules | None = None):
+        """Materialize and replay-validate this solver result as a ``Plan``."""
+
+        from .plan import Plan
+
+        return Plan.from_moves(
+            board,
+            self.moves,
+            rules=rules,
+            upper_bound=self.upper_bound,
+            optimal_proven=self.optimal_proven,
+            solver_stats={
+                "solver": self.solver_name,
+                "nodes": self.nodes_examined,
+                "search_time_seconds": self.search_time_seconds,
+                "cancelled": self.cancelled,
+                **dict(self.solver_stats),
+            },
+            root_evaluations=self.root_evaluations,
+        )
 
 
 class Solver(Protocol):
@@ -114,13 +150,24 @@ def finish_solution(
 ) -> Solution:
     stats.finished_at = monotonic()
     stats.optimality_proven = optimal_proven
+    stats.best_complete_score = score
+    stats.upper_bound = upper_bound
     return Solution(
         moves=tuple(moves),
         total_score=score,
         optimal_proven=optimal_proven,
         search_time_seconds=stats.elapsed,
-        nodes_examined=stats.nodes,
+        nodes_examined=stats.states_examined,
         solver_name=solver_name,
         upper_bound=upper_bound,
         cancelled=stats.interrupted,
+        terminal_plans=stats.terminal_plans,
+        complete_rollouts=stats.complete_rollouts,
+        solver_stats={
+            "states_examined": stats.states_examined,
+            "search_nodes": stats.nodes,
+            "rollout_nodes": stats.rollout_nodes,
+            "terminal_plans": stats.terminal_plans,
+            "complete_rollouts": stats.complete_rollouts,
+        },
     )

@@ -14,8 +14,10 @@ from blob_solver.vision.region import Region
 class SequenceCapture:
     def __init__(self, images) -> None:
         self.images = list(images)
+        self.capture_count = 0
 
     def capture(self, region):
+        self.capture_count += 1
         if len(self.images) > 1:
             return self.images.pop(0).copy()
         return self.images[0].copy()
@@ -79,7 +81,7 @@ def test_controller_calibrates_recommends_and_validates_readback(tmp_path) -> No
     assert controller.last_recommended_move is None
 
 
-def test_autoplay_stops_only_after_verified_sequence(tmp_path) -> None:
+def test_default_autoplay_follows_the_frozen_sequence_without_readback(tmp_path) -> None:
     initial_matrix = [["red", "yellow"], ["red", "yellow"]]
     initial_image = make_board_image(initial_matrix, cell_size=40)
     capture = SequenceCapture([initial_image])
@@ -122,5 +124,54 @@ def test_autoplay_stops_only_after_verified_sequence(tmp_path) -> None:
     moves = controller.run_autoplay()
     assert moves == len(plan.moves)
     assert len(fake_input.clicks) == moves
+    assert capture.capture_count == 1
     assert controller.current_board is not None and controller.current_board.block_count == 0
     assert controller.estimated_score == 8
+
+
+def test_verified_execution_explicitly_reconstructs_after_each_move(tmp_path) -> None:
+    initial_matrix = [["red", "yellow"], ["red", "yellow"]]
+    initial_image = make_board_image(initial_matrix, cell_size=40)
+    capture = SequenceCapture([initial_image])
+    config = AppConfig(
+        board=BoardConfig(rows=2, cols=2, min_group=2, num_colors=2),
+        vision=VisionConfig(
+            confidence_threshold=0.8,
+            settle_frames=2,
+            settle_interval_ms=1,
+            settle_timeout_seconds=0.2,
+        ),
+        solver=SolverConfig(mode="exact", time_limit_seconds=1.0, max_nodes=1000),
+        region=Region(10, 20, 80, 80),
+    )
+    desktop = SimpleNamespace(
+        capture=capture,
+        selector=None,
+        input=FakeInput(),
+        overlay=NullOverlay(),
+    )
+    logger = logging.getLogger("blob_solver.test_verified_autoplay")
+    logger.addHandler(logging.NullHandler())
+    controller = AutomationController(config, config_path=tmp_path / "config.toml", desktop=desktop, logger=logger)
+    controller.calibrate()
+    plan = controller.analyze(mode="exact", time_limit=1)
+    assert controller.current_board is not None
+
+    states = []
+    current = controller.current_board
+    for move in plan.moves:
+        current = apply_move(current, move)
+        states.append(current)
+    capture.images = [
+        make_board_image([list(row) for row in state.to_matrix(rows=2, cols=2, empty=None)], cell_size=40)
+        for state in states
+        for _ in range(2)
+    ]
+    config.automation.verified_execution = True
+    config.automation.click_delay_ms = 0
+
+    moves = controller.run_autoplay()
+
+    assert moves == len(plan.moves)
+    assert capture.capture_count == 1 + 2 * moves
+    assert controller.current_board is not None and controller.current_board.block_count == 0

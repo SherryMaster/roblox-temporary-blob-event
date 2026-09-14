@@ -15,20 +15,26 @@ settle_interval_ms = 80
 settle_timeout_seconds = 3.0
 
 [solver]
-mode = "beam"
-time_limit_seconds = 3.0
-beam_width = 5000
-max_nodes = 250000
-candidate_moves = 80
+mode = "hybrid"
+quality = "balanced" # fast, balanced, deep, exhaustive
+time_limit_seconds = 5.0
+beam_width = 700
+max_nodes = 180000
+candidate_moves = 48
+exact_endgame_blocks = 25
+exact_legal_groups = 8
+exact_work_limit = 140
 rollout_seed = 0
+process_count = 0 # 0 = automatic bounded root workers; 1 = serial
 
 [automation]
-autoplay = false
 click_delay_ms = 150
-max_mismatches = 1
+animation_delay_ms = 350
+verified_execution = false
 
 [desktop]
 backend = "auto"
+input_space = "logical" # logical is the default; physical is diagnostic/explicit
 
 # This is filled by blob-solver select-region:
 # [region]

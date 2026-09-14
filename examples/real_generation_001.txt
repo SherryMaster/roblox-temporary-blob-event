@@ -1,0 +1,12 @@
+# Reference 10x10 generation transcribed from the supplied real-game screenshot.
+# Rows are top-to-bottom; this is a benchmark fixture, not a tuned special case.
+G Y R R B G B Y Y Y
+Y Y G B B Y R R R G
+R R R R Y R R G Y G
+B G Y R B Y G B Y R
+Y G R B G R R Y B G
+G Y G Y Y G R B G Y
+B G Y G Y R B G Y G
+B R Y B R R B Y R Y
+G Y Y Y G G R G B B
+Y B G B Y R B R Y R

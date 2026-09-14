@@ -1,4 +1,4 @@
-"""Best-effort transparent Qt overlay with an explicit preview fallback."""
+"""Overlay interfaces, with Qt retained only for the X11 fallback path."""
 
 from __future__ import annotations
 
@@ -19,6 +19,9 @@ class HighlightSpec:
     group_size: int
     immediate_score: int
     projected_total: int
+    step: int = 1
+    step_count: int = 1
+    color: str = ""
 
 
 class NullOverlay:
@@ -52,7 +55,7 @@ class QtOverlay(NullOverlay):
 
     def __init__(self, parent: Any = None) -> None:
         try:
-            from PySide6.QtCore import Qt
+            from PySide6.QtCore import QObject, QThread, Qt, Signal, Slot
             from PySide6.QtGui import QColor, QPainter, QPen
             from PySide6.QtWidgets import QWidget
         except ImportError as exc:  # pragma: no cover - optional desktop UI
@@ -61,23 +64,68 @@ class QtOverlay(NullOverlay):
         self._QColor = QColor
         self._QPainter = QPainter
         self._QPen = QPen
+        self._QThread = QThread
         self._widget_class = QWidget
         self._widget = _make_overlay_widget(self, parent)
         self.last_spec: HighlightSpec | None = None
 
+        overlay = self
+
+        class Bridge(QObject):
+            show_requested = Signal()
+            hide_requested = Signal()
+            close_requested = Signal()
+
+            @Slot()
+            def apply_show(self) -> None:
+                spec = overlay.last_spec
+                if spec is None:
+                    return
+                overlay._widget.setGeometry(spec.region.x, spec.region.y, spec.region.width, spec.region.height)
+                overlay._widget.update()
+                overlay._widget.show()
+                overlay._widget.raise_()
+
+            @Slot()
+            def apply_hide(self) -> None:
+                overlay._widget.hide()
+
+            @Slot()
+            def apply_close(self) -> None:
+                overlay._widget.close()
+
+        self._gui_thread = QThread.currentThread()
+        self._bridge = Bridge()
+        self._bridge.show_requested.connect(
+            self._bridge.apply_show,
+            Qt.ConnectionType.BlockingQueuedConnection,
+        )
+        self._bridge.hide_requested.connect(
+            self._bridge.apply_hide,
+            Qt.ConnectionType.BlockingQueuedConnection,
+        )
+        self._bridge.close_requested.connect(
+            self._bridge.apply_close,
+            Qt.ConnectionType.BlockingQueuedConnection,
+        )
+
+    def _invoke_gui(self, action: str) -> None:
+        if self._QThread.currentThread() == self._gui_thread:
+            getattr(self._bridge, f"apply_{action}")()
+            return
+        getattr(self._bridge, f"{action}_requested").emit()
+
     def show(self, spec: HighlightSpec) -> None:
         self.last_spec = spec
-        self._widget.setGeometry(spec.region.x, spec.region.y, spec.region.width, spec.region.height)
-        self._widget.update()
-        self._widget.show()
-        self._widget.raise_()
+        self._invoke_gui("show")
 
     def hide(self) -> None:
         self.last_spec = None
-        self._widget.hide()
+        self._invoke_gui("hide")
 
     def close(self) -> None:
-        self._widget.close()
+        self.last_spec = None
+        self._invoke_gui("close")
 
 
 def _make_overlay_widget(overlay: QtOverlay, parent: Any = None) -> Any:
@@ -133,3 +181,11 @@ def create_overlay(*, prefer_qt: bool = True) -> NullOverlay:
         except (ImportError, RuntimeError):
             pass
     return NullOverlay()
+
+
+def create_wayland_overlay() -> NullOverlay:
+    """Create the native layer-shell client; never substitute a Qt window."""
+
+    from .wayland_overlay import WaylandLayerShellOverlay
+
+    return WaylandLayerShellOverlay()

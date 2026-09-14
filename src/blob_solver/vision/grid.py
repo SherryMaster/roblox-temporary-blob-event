@@ -59,17 +59,34 @@ def sample_grid(
     if not 0.05 <= patch_ratio <= 1.0:
         raise ValueError("patch_ratio must be between 0.05 and 1.0")
     image_width, image_height = image.size
-    if image_width < region.width or image_height < region.height:
+    if image_width < spec.cols or image_height < spec.rows:
         raise ValueError(
-            f"capture image {image_width}x{image_height} is smaller than region "
-            f"{region.width}x{region.height}"
+            f"capture image {image_width}x{image_height} is too small for a "
+            f"{spec.rows}x{spec.cols} grid"
         )
     if region.width < spec.cols or region.height < spec.rows:
         raise ValueError("region must be at least one pixel wide/high per logical cell")
+
+    # grim returns a crop in the region's coordinate space, but the image can
+    # be denser than that space when an output is scaled (for example a 200x100
+    # logical crop can be a 400x200 pixel PNG at scale 2).  Keep the region as
+    # the source of logical cell geometry and map each edge into image-local
+    # pixels.  This also leaves X11's one-pixel-per-coordinate captures
+    # unchanged.  CellSample.patch_box is deliberately image-local because it
+    # is only used for diagnostics and sample extraction.
+    def image_edge(edge: int, logical_extent: int, image_extent: int) -> int:
+        return round(edge * image_extent / logical_extent)
+
     samples: list[CellSample] = []
     for row in range(spec.rows):
         for col in range(spec.cols):
-            left, top, right, bottom = region.cell_rect(spec.rows, spec.cols, row, col)
+            logical_left, logical_top, logical_right, logical_bottom = region.cell_rect(
+                spec.rows, spec.cols, row, col
+            )
+            left = image_edge(logical_left, region.width, image_width)
+            top = image_edge(logical_top, region.height, image_height)
+            right = image_edge(logical_right, region.width, image_width)
+            bottom = image_edge(logical_bottom, region.height, image_height)
             cell_width, cell_height = right - left, bottom - top
             patch_width = max(1, int(round(cell_width * patch_ratio)))
             patch_height = max(1, int(round(cell_height * patch_ratio)))

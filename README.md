@@ -1,173 +1,312 @@
 # Blob Solver
 
-Blob Solver is a modular SameGame assistant for a colored-block browser game. It
-captures a user-selected board rectangle, reconstructs the regular grid with
-computer vision, searches for a high-scoring sequence, highlights only the next
-logical move, and can optionally perform one verified click at a time.
+Blob Solver is a computer-vision-assisted SameGame planner for a colored-block
+browser game. It reconstructs one generation, searches complete deterministic
+continuations, and then executes the frozen plan without repeatedly reading the
+screen.
 
-The core game engine and all solver modes are independent of a desktop session.
-Wayland/Hyprland integration is isolated behind adapters, so the same board model
-can be tested from text fixtures or used with another capture/input backend later.
+The primary desktop target is Omarchy on Arch Linux with Hyprland and Wayland.
+The game engine, planner, and vision code remain independent of the desktop
+session and can be run entirely from text fixtures.
 
 ## Game model
 
 - Orthogonal connectivity only; diagonals do not connect.
 - A legal move removes a connected component of at least two cells.
-- Every column falls downward independently.
-- Empty columns are removed and surviving columns shift left.
-- A group of size k scores k squared.
+- Each column falls downward after a removal.
+- Empty columns are removed and the remaining columns shift left.
+- A group of size `k` scores `k²`.
 
-The frozen solver state is a tuple of non-empty columns, each stored
-bottom-to-top. Move coordinates are (row_from_bottom, column) logical
-coordinates, never desktop pixels.
-
-Greedy largest-group play is only a baseline. The beam, rollout, and exact
-branch-and-bound solvers search alternatives because a small move can cause
-gravity and column collapse to merge later groups. A result is labeled
-BEST KNOWN SOLUTION unless a completed exact search proves the optimum.
+`Board` is immutable and canonical: non-empty columns are stored
+bottom-to-top. Move cells use logical `(row_from_bottom, column)` coordinates.
+The desktop layer converts those coordinates to screen positions only when a
+highlight or click is needed.
 
 ## Install
 
 Python 3.12 or newer is required.
 
-    python -m venv .venv
-    .venv/bin/pip install -e '.[test,desktop]'
+```sh
+python -m venv --system-site-packages .venv
+.venv/bin/pip install -e '.[test]'
+```
 
-For the graphical control panel and transparent overlay:
+For the optional control panel:
 
-    .venv/bin/pip install -e '.[ui]'
+```sh
+.venv/bin/pip install -e '.[ui]'
+```
 
-Run tests with:
+The `--system-site-packages` flag lets an Arch-created environment see the
+pacman `python-gobject` and `python-cairo` modules. If your Python environment
+is intentionally isolated, install equivalent GTK bindings inside that
+environment instead.
 
-    .venv/bin/pytest
+Run the full automated suite with:
 
-## Text-only development tools
+```sh
+.venv/bin/pytest
+```
 
-The text path is the safest way to understand the physics before using a real
-browser:
+### Arch / Omarchy packages
 
-    blob-solver inspect-board examples/board_small.txt
-    blob-solver inspect-board examples/board_small.txt --move 0
-    blob-solver board-debug
-    blob-solver solve-board examples/board_demo.txt --solver exact --time 10
-    blob-solver benchmark examples/board_demo.txt --time 2
+The first-class Wayland path uses the wlroots layer-shell protocol through
+GTK3/PyGObject:
 
-Rows are written top-to-bottom. Use one-character colors such as R, Y, G, and B;
-whitespace-separated symbolic tokens also work. A dot is empty. The validator
-prints every legal group, its cells, and its square score.
-board-debug also accepts pasted rows on stdin and lets you apply move indexes
-interactively, printing the resulting board after every move. benchmark reports
-the gap to the exact score when the exact run proves one.
+```sh
+sudo pacman -S grim slurp ydotool gtk3 gtk-layer-shell python-gobject python-cairo
+```
 
-## Wayland/Hyprland workflow
+`ydotoold` must be running and able to access `/dev/uinput` for autoplay. On
+systems where the daemon requires elevated uinput access, run it as a system
+service or start `sudo ydotoold --touch-on`; confirm the installed daemon's
+help output because Arch package versions differ. Scan and hint mode do not
+need ydotool. Package names can vary with an Arch mirror; the required
+capabilities are `grim`, `slurp`, `ydotoold`, GTK3, `python-gobject`,
+`python-cairo`, and `gtk-layer-shell`.
 
-The preferred backend uses:
+The layer-shell client probes the control-panel interpreter and then the usual
+Arch interpreters (`/usr/bin/python3`, `/usr/bin/python`) for GTK introspection,
+so an isolated mise/venv Python can still launch the native service. To force a
+specific interpreter, set `BLOB_SOLVER_WAYLAND_PYTHON` before starting the UI.
 
-- grim to capture the exact selected rectangle
-- slurp to interactively select a rectangle
-- ydotool plus its ydotoold uinput daemon for optional absolute pointer input
+## Default single-scan workflow
 
-On Arch, install the relevant packages using your normal package manager, then
-ensure ydotoold has access to /dev/uinput. A capture-only or hint-only session
-does not need ydotool. The application checks commands at runtime and reports
-missing dependencies; it does not silently fall back to uncontrolled clicks.
+The normal flow is deliberately generation-based:
 
-Select and save a board region:
+1. Select a fixed board rectangle with `slurp` or configure it in TOML.
+2. Press **Scan & Solve** in the UI, or run `blob-solver solve`.
+3. The overlay is hidden and the region is captured exactly once.
+4. The same image supplies calibration, all 100 classifications, and the
+   immutable initial `Board`.
+5. The hybrid planner builds a complete best-known sequence and simulates every
+   intermediate board before publishing it.
+6. **Show Step**, **Next Step**, and **Auto Play** consume that frozen sequence.
 
-    blob-solver select-region
+Normal execution performs no capture, classification, or solver restart after
+each click. A configurable animation delay defaults to 350 ms.
 
-Or configure one directly:
+The only normal ways to read the screen again are:
 
-    blob-solver --config config.toml hint --region 100,200,820,740 --rows 10 --cols 10
+- **Rescan / Recover**, which discards the remaining plan and solves a new
+  complete plan from a new physical observation.
+- **Verified execution**, an advanced opt-in mode that restores capture-after-
+  each-move validation for debugging or unusually unreliable conditions.
 
-The last successful region is saved to
-~/.config/blob-solver/config.toml unless --config is supplied.
+Manual mode uses **Next Step** to advance the predicted board after the user
+clicks. **Previous Step** only inspects an earlier predicted state; it never
+changes the physical game. An accidental click should use **Rescan / Recover**.
 
-If a transparent global overlay is unavailable under a compositor/session,
-PySide6 hint mode still presents the reconstructed board and recommendation in
-the control panel. The overlay is hidden around every capture so its outline can
-never become a sampled color.
+## Control panel
 
-For X11, request --backend x11. Capture uses optional mss first and Pillow
-ImageGrab as a fallback; input uses xdotool. Explicit coordinates are
-recommended when no X11 region selector is installed.
+Start the compact PySide6 control panel with:
 
-## UI workflow
+```sh
+blob-solver ui
+```
 
-Start the control panel:
+It has setup, plan, and execution areas. The plan area contains a painted
+graphical board and a timeline. Selecting a future timeline row displays that
+`PlanStep.before_board`, highlights the complete connected component, and shows
+the step score and projected final score. Search progress reports actual
+complete-plan scores, upper bounds, state counts, terminal plans, and elapsed
+time; heuristic values are not presented as projected scores.
 
-    blob-solver ui
+The normal quality choices are:
 
-1. Select or enter the board rectangle and set rows/columns.
-2. Press Calibrate, then inspect the reconstructed matrix and confidence.
-3. Press Analyze or Show Next Move.
-4. Manually click the highlighted group, then press Re-read After Manual Click.
-5. Enable Auto Play only after the observed transitions match the simulator.
+- **Fast** — roughly one second when the environment allows it.
+- **Balanced** — roughly five seconds.
+- **Deep** — roughly 20 seconds.
+- **Exhaustive** — no normal short deadline; attempts a proof.
 
-Autoplay defaults off. It refuses to click when any cell is unknown or below the
-confidence threshold, hides the overlay before input, waits for repeated stable
-observations after each click, and compares the actual board with the simulated
-next state. A mismatch causes a fresh replan and stops further automatic input.
-The Stop and Emergency Stop controls are separate; Escape can be wired to the
-same emergency method in the included control panel.
+Exact timings depend on board shape and CPU. In the control panel, a zero
+search-time override means “use the selected quality preset”; a positive value
+provides an explicit bound. Root worker count is automatic by default (`0`),
+serial when set to `1`, and otherwise bounded to the requested number.
+Internal algorithm names are intended for developers and benchmarks, not
+ordinary operation.
 
-The CLI equivalents are:
+## Wayland overlay
 
-    blob-solver scan
-    blob-solver solve
-    blob-solver vision-debug --output board-debug.png
-    blob-solver hint
-    blob-solver autoplay --confirm
+On a Wayland session the control panel does not create the board overlay as a
+Qt top-level window. The factory starts a separate GTK3 process using
+`gtk-layer-shell`:
 
-The confirm flag is required for CLI autoplay as an intentional safety gate.
+- the surface is on the compositor `OVERLAY` layer;
+- it has no decorations, no exclusive zone, and no keyboard interactivity;
+- the realized surface receives an explicitly empty Cairo/GDK input region;
+- the entire connected group is outlined and softly filled;
+- the actual click cell receives a stronger target ring;
+- a small label shows the step, color, immediate score, and group size.
 
-## Vision and calibration
+The empty pointer region is important: transparent pixels alone do not make a
+surface click-through. The client waits for an IPC acknowledgement after each
+show/hide command, so capture does not race a still-visible highlight. The
+overlay communicates with the PySide6 process over a local Unix socket and
+knows nothing about search algorithms.
 
-The board rectangle is divided into equal cells. Each cell uses a centered inner
-patch and a per-channel median, avoiding rounded corners, outlines, grid
-background, and most pointer contamination. Calibration clusters bright samples
-and matches clusters to the default red/yellow/green/blue symbolic labels. Dark
-navy samples are classified as empty. Classification returns every cell's RGB,
-symbol, and confidence.
+The X11 Qt overlay remains only as the explicit X11 fallback. It is not used by
+the Wayland factory path. When `WAYLAND_DISPLAY` is present, `backend = "auto"`
+does not silently switch to X11 if a Wayland dependency is missing; choose
+`backend = "x11"` explicitly if that is genuinely intended.
 
-An observation is rejected if it contains unknown colors, low-confidence cells,
-or internal holes that violate settled-board geometry. vision-debug prints a
-labeled matrix and can save a graphical preview with confidence values.
+### Coordinates and scaling
 
-After a click, settle detection captures around a configurable interval and
-requires the same valid canonical board for a configurable number of consecutive
-frames. It does not rely on one fixed sleep.
+Wayland capture pixels, slurp geometry, Hyprland layout coordinates, layer-shell
+logical coordinates, and input coordinates are not assumed to be interchangeable.
+`CoordinateMapper` is the single conversion module. It consumes
+`hyprctl monitors -j`, records monitor position, logical dimensions, scale, and
+focus, and logs:
 
-## Solver modes
+- capture region;
+- selected monitor and scale;
+- local logical layer region;
+- logical click point;
+- calculated input click point and its declared coordinate space.
 
-- greedy / greedy-size: baselines for comparison.
-- beam: configurable anytime beam search with a transposition table and
-  topology-aware one-ply ordering.
-- rollout: deterministic-seed randomized greedy restarts.
-- exact: depth-first branch-and-bound with memoized reaching states and the
-  admissible upper bound sum(color_count squared).
+Select a region wholly inside one output, especially when using multiple
+monitors or fractional scaling. `desktop.input_space = "logical"` is the
+default. Set `physical` only when the selected input backend is known to expect
+physical pixels.
 
-All non-exact modes retain a complete greedy incumbent when a short wall-clock
-budget expires. Exact mode reports OPTIMAL SOLUTION PROVEN only after the root
-search finishes or every remaining branch is safely pruned. If interrupted, its
-absolute color-count upper bound is reported as a conservative gap.
+Run the manual diagnostic on the real Hyprland session:
 
-## Logging and configuration
+```sh
+blob-solver overlay-test --backend wayland --region 100,200,820,740 --rows 10 --cols 10
+```
 
-The controller writes JSON Lines session events containing captures, confidence,
-recommendations, search statistics, expected/actual boards, and safety errors.
-Use config.example.toml as a starting point. Important settings include
-patch_ratio, confidence_threshold, settle frame count/interval, solver time,
-beam width, node limit, and click delay.
+It draws a numbered test grid, prints monitor/scaling diagnostics, and waits
+while you verify alignment and click-through behavior. If the current execution
+environment has no live Wayland compositor, this is the one command to run on
+the Omarchy desktop.
 
-## Known limitations
+## Text-board commands
 
-- Browser zoom, moving/resizing the window, and compositor scaling can invalidate
-  a previously selected region; rescan and recalibrate after geometry changes.
-- Transparent global windows are compositor-dependent under Wayland. The
-  companion debug view is the deliberate fallback.
-- ydotool requires a working uinput daemon and appropriate permissions.
-- No OCR is required or used for score tracking; the application tracks the
-  simulated square scores. Displayed-score OCR can be added later as a check.
-- The absolute color-count bound is safe but loose. Exact search is intended for
-  small boards; beam/rollout are the practical modes for a 10 x 10 board.
+Rows are written top-to-bottom. Compact strings and whitespace-separated tokens
+are accepted; `.`, `_`, and `-` mean empty cells.
+
+```sh
+blob-solver inspect-board examples/real_generation_001.txt
+blob-solver solve-board examples/real_generation_001.txt --solver hybrid --quality fast --time 1
+blob-solver benchmark examples/real_generation_001.txt --time 2
+blob-solver board-debug examples/real_generation_001.txt
+```
+
+The supplied fixture's two-second benchmark currently reports greedy `288`,
+legacy beam `288`, and hybrid Fast/Balanced/Deep `798` on this machine;
+rollout is intentionally seed/time sensitive. These are benchmark observations,
+not hard-coded answers or optimality claims.
+
+The developer solver choices are `greedy`, `greedy-size`, `beam`,
+`legacy-beam`, `rollout`, `exact`, and `hybrid`. `legacy-beam` is the frozen
+pre-overhaul baseline used only for comparison. Randomized rollout search is
+called rollout; it is not mislabelled as MCTS.
+
+The desktop commands are:
+
+```sh
+blob-solver select-region --backend wayland
+blob-solver scan --backend wayland
+blob-solver solve --backend wayland
+blob-solver hint --backend wayland
+blob-solver autoplay --backend wayland --confirm
+blob-solver capture-fixture --backend wayland --output tests/fixtures/real-board-001.png
+blob-solver overlay-test --backend wayland
+blob-solver ui
+```
+
+`solve` captures once and prints the complete plan. `capture-fixture` stores
+that one screenshot and its classified symbolic matrix for later regression
+testing.
+
+## Planner and plan invariants
+
+The product-facing planner is `HybridPlanner`. It combines:
+
+1. several immediate complete incumbents (score, topology, consolidation,
+   small-removal, low-fragmentation, and seeded randomized policies);
+2. fair exploration of every legal root move;
+3. best-first/beam-style expansion with root diversity and state deduplication;
+4. complete rollout continuations attached to promising partial nodes;
+5. exact memoized suffix solving when block count, legal-group count, and work
+   estimates make it practical;
+6. an admissible color-count upper bound for safe pruning.
+
+Independent root continuations may use the configured process pool. The pool is
+used only when there are enough roots to amortize startup and serialization;
+otherwise the planner stays serial. Worker inputs are immutable board/search
+data, and an unavailable or failed multiprocessing start method falls back to
+the same serial planner.
+
+Every search node has a score-so-far, a complete lower-bound continuation, and
+an upper bound. The optimistic bound is:
+
+```text
+score_so_far + sum(remaining_count[color]²)
+```
+
+An approximate result is reported as **BEST KNOWN PLAN**. **OPTIMAL PLAN
+PROVEN** is used only after exhaustive branch completion or safe proof. The
+reported total is always the sum of replayed step scores; the gap is the
+difference between the best-known total and a safe upper bound.
+
+`Plan` owns `PlanStep.before_board` and `PlanStep.after_board` for every move.
+Construction verifies:
+
+```text
+every move is legal on its before_board
+after_board == apply_move(before_board, move)
+sum(step.immediate_score) == total_score
+the final board has no legal group
+```
+
+The reference fixture contains the supplied 10x10 generation. Its immediate-
+largest-group greedy baseline is independently checked at 288; the deterministic
+Fast hybrid incumbent currently exceeds the supplied 436 screenshot result on
+this fixture without encoding that score as a special case.
+
+## Vision and real fixtures
+
+Each cell uses a centered inner patch and per-channel median, reducing rounded
+corner, outline, navy-background, and pointer contamination. Calibration uses
+the same initial image as classification when no saved profile exists. Unknown
+colors, low-confidence cells, and invalid settled-board holes reject the
+generation before it can be planned or clicked.
+
+Generated Pillow rectangles remain unit tests. To capture a real browser board:
+
+```sh
+blob-solver capture-fixture --backend wayland \
+  --region 100,200,820,740 \
+  --rows 10 --cols 10 \
+  --output tests/fixtures/real-board-001.png
+```
+
+Commit the resulting PNG and symbolic matrix after visually checking them.
+Real fixtures should cover rounded cells, gradients, the navy background,
+browser zoom, selected outlines, and pointer contamination.
+
+## Configuration and logging
+
+Copy `config.example.toml` and adjust the fixed region, grid dimensions,
+confidence threshold, quality preset, search limits, animation delay, and
+`verified_execution`. The last successful region and calibration are persisted
+when a config path is provided.
+
+Session events are JSON Lines and include captures, board hashes, plan/search
+statistics, recommendations, coordinate diagnostics, and explicit verification
+results. Auto Play is an explicit UI/CLI action rather than a startup config
+flag. There is no decorative `max_mismatches` setting: mismatch handling is
+implemented only by the opt-in Verified path.
+
+## References
+
+The Wayland implementation follows the compositor protocol and upstream
+projects:
+
+- [wlr-layer-shell protocol](https://github.com/swaywm/wlroots/blob/master/protocol/wlr-layer-shell-unstable-v1.xml)
+- [gtk-layer-shell](https://github.com/wmww/gtk-layer-shell)
+- [Hyprland monitor configuration](https://wiki.hypr.land/Configuring/Basics/Monitors/)
+- [grim](https://github.com/emersion/grim)
+- [slurp](https://github.com/emersion/slurp)
+- [ydotool](https://github.com/ReimuNotMoe/ydotool)

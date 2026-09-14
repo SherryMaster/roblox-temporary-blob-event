@@ -49,6 +49,25 @@ def test_full_board_calibration_and_reconstruction() -> None:
     assert observation.board is not None
 
 
+def test_scaled_capture_samples_logical_cells_across_the_full_image() -> None:
+    matrix = [
+        ["red", "yellow", "green", "blue"],
+        ["yellow", "green", "blue", "red"],
+        ["green", "blue", "red", "yellow"],
+    ]
+    logical = render_board(matrix, cell_size=10)
+    scaled = logical.resize((logical.width * 2, logical.height * 2), Image.Resampling.NEAREST)
+    spec = GridSpec(rows=3, cols=4)
+    samples = sample_grid(scaled, Region(0, 0, logical.width, logical.height), spec)
+    profile = calibrate(samples, num_colors=4)
+    observation = classify_samples(samples, spec, profile, confidence_threshold=0.85)
+
+    assert observation.valid
+    assert observation.matrix == tuple(tuple(row) for row in matrix)
+    # The diagnostic patch is in image pixels, not logical screen coordinates.
+    assert samples[-1].patch_box == (65, 45, 74, 54)
+
+
 def test_empty_cells_and_rightward_columns_are_not_a_color() -> None:
     matrix = [
         [None, None, None, None, None],
