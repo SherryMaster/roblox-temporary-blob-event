@@ -1,0 +1,16 @@
+{
+  "full": [
+    ["red", "yellow", "green", "blue"],
+    ["yellow", "green", "blue", "red"],
+    ["green", "blue", "red", "yellow"]
+  ],
+  "partial": [
+    [null, null, null, null, null],
+    [null, "blue", null, null, null],
+    ["red", "blue", "yellow", null, null]
+  ],
+  "perturbed": [
+    ["red", "yellow"],
+    ["green", "blue"]
+  ]
+}

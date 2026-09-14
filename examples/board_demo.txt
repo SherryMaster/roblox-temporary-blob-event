@@ -1,0 +1,7 @@
+# A small topology-sensitive board for inspect/solve/benchmark.
+RRGGBY
+YRGBYR
+BYYGRB
+GBRRYG
+RBGYRB
+YGRBBY

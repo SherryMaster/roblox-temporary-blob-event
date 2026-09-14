@@ -1,0 +1,38 @@
+# Optional log destination.
+log_file = "blob-solver-session.jsonl"
+
+[board]
+rows = 10
+cols = 10
+min_group = 2
+num_colors = 4
+
+[vision]
+patch_ratio = 0.45
+confidence_threshold = 0.90
+settle_frames = 3
+settle_interval_ms = 80
+settle_timeout_seconds = 3.0
+
+[solver]
+mode = "beam"
+time_limit_seconds = 3.0
+beam_width = 5000
+max_nodes = 250000
+candidate_moves = 80
+rollout_seed = 0
+
+[automation]
+autoplay = false
+click_delay_ms = 150
+max_mismatches = 1
+
+[desktop]
+backend = "auto"
+
+# This is filled by blob-solver select-region:
+# [region]
+# x = 100
+# y = 200
+# width = 820
+# height = 740

@@ -1,0 +1,3 @@
+# Rows are top-to-bottom. Dot means an empty cell.
+R.YR
+R.YR
