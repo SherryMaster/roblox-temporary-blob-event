@@ -28,24 +28,30 @@ class VisionConfig:
 
 @dataclass(slots=True)
 class SolverConfig:
-    mode: str = "beam"
-    time_limit_seconds: float = 3.0
-    beam_width: int = 5000
-    max_nodes: int = 250_000
-    candidate_moves: int = 80
+    mode: str = "hybrid"
+    quality: str = "balanced"
+    time_limit_seconds: float = 5.0
+    beam_width: int = 700
+    max_nodes: int = 180_000
+    candidate_moves: int = 48
+    exact_endgame_blocks: int = 25
+    exact_legal_groups: int = 8
+    exact_work_limit: int = 140
     rollout_seed: int = 0
+    process_count: int = 0
 
 
 @dataclass(slots=True)
 class AutomationConfig:
-    autoplay: bool = False
     click_delay_ms: int = 150
-    max_mismatches: int = 1
+    animation_delay_ms: int = 350
+    verified_execution: bool = False
 
 
 @dataclass(slots=True)
 class DesktopConfig:
     backend: str = "auto"
+    input_space: str = "logical"
 
 
 @dataclass(slots=True)

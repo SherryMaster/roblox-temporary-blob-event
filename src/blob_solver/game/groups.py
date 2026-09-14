@@ -45,33 +45,51 @@ def _neighbors(cell: Cell) -> tuple[Cell, ...]:
 
 
 @lru_cache(maxsize=100_000)
-def _find_groups_cached(board: Board, min_group: int) -> tuple[Move, ...]:
+def _find_components_cached(board: Board) -> tuple[Move, ...]:
+    columns = board.columns
     visited: set[Cell] = set()
-    groups: list[Move] = []
-    for cell in board.cells():
-        if cell in visited:
-            continue
-        color = board.cell_color(cell)
-        stack = [cell]
-        component: list[Cell] = []
-        visited.add(cell)
-        while stack:
-            current = stack.pop()
-            component.append(current)
-            for neighbor in _neighbors(current):
-                if neighbor in visited:
-                    continue
-                try:
-                    neighbor_color = board.cell_color(neighbor)
-                except IndexError:
-                    continue
-                if neighbor_color == color:
+    components: list[Move] = []
+    for column_index, column in enumerate(columns):
+        for row_from_bottom in range(len(column)):
+            cell = (row_from_bottom, column_index)
+            if cell in visited:
+                continue
+            color = column[row_from_bottom]
+            stack = [cell]
+            component: list[Cell] = []
+            visited.add(cell)
+            while stack:
+                current_row, current_column = stack.pop()
+                current = (current_row, current_column)
+                component.append(current)
+                for neighbor_row, neighbor_column in _neighbors(current):
+                    if neighbor_row < 0 or neighbor_column < 0:
+                        continue
+                    if neighbor_column >= len(columns) or neighbor_row >= len(columns[neighbor_column]):
+                        continue
+                    neighbor = (neighbor_row, neighbor_column)
+                    if neighbor in visited or columns[neighbor_column][neighbor_row] != color:
+                        continue
                     visited.add(neighbor)
                     stack.append(neighbor)
-        if len(component) >= min_group:
-            groups.append(Move.create(color, component))
-    groups.sort(key=lambda move: (move.cells[0], str(move.color)))
-    return tuple(groups)
+            components.append(Move.create(color, component))
+    components.sort(key=lambda move: (move.cells[0], str(move.color)))
+    return tuple(components)
+
+
+def find_components(board: Board) -> tuple[Move, ...]:
+    """Return every orthogonal component, including singleton cells.
+
+    Search heuristics use singleton topology even though singletons are not
+    playable moves. Keeping this separate from ``find_groups`` preserves the
+    public legal-move contract and lets the component traversal stay cached.
+    """
+
+    return _find_components_cached(board)
+
+
+def _find_groups_cached(board: Board, min_group: int) -> tuple[Move, ...]:
+    return tuple(component for component in find_components(board) if component.size >= min_group)
 
 
 def find_groups(board: Board, min_group: int = 2) -> tuple[Move, ...]:
@@ -85,4 +103,4 @@ def find_groups(board: Board, min_group: int = 2) -> tuple[Move, ...]:
 def clear_group_cache() -> None:
     """Clear cached components, useful for long-running debug sessions/tests."""
 
-    _find_groups_cached.cache_clear()
+    _find_components_cached.cache_clear()

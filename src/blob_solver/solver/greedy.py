@@ -39,9 +39,9 @@ class GreedySolver:
         moves: list[Move] = []
         score = 0
         while True:
-            if cancel_event is not None and cancel_event.is_set():
-                stats.interrupted = True
-                break
+            # Greedy is the planner-wide complete-plan safety net. It is fast
+            # enough to finish rather than exposing a partial path when a
+            # caller cancels a higher-level search.
             legal = find_groups(current, min_group=self.min_group)
             if not legal:
                 break

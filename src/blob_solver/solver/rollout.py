@@ -8,7 +8,7 @@ from threading import Event
 from time import monotonic
 
 from blob_solver.game.board import Board
-from blob_solver.game.groups import Move, find_groups
+from blob_solver.game.groups import Move
 from blob_solver.game.rules import GameRules
 from blob_solver.game.transition import apply_move
 

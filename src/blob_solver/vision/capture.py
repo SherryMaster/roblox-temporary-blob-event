@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from io import BytesIO
 import os
-from pathlib import Path
 import shutil
 import subprocess
 from typing import Any, Protocol
